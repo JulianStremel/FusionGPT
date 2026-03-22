@@ -2,38 +2,558 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
-    <script src="static/palette.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FusionGPT</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #1e1e1e;
+            --bg-secondary: #252526;
+            --bg-tertiary: #2d2d30;
+            --bg-hover: #3e3e42;
+            --text-primary: #cccccc;
+            --text-secondary: #969696;
+            --text-muted: #6e6e6e;
+            --accent: #0078d4;
+            --accent-hover: #1a8ad4;
+            --border: #3e3e42;
+            --user-msg: #264f78;
+            --assistant-msg: #2d2d30;
+            --error: #f44747;
+            --success: #4ec9b0;
+            --scrollbar-bg: #1e1e1e;
+            --scrollbar-thumb: #424242;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 13px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
+        ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header h1 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .icon-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 13px;
+            transition: all 0.15s;
+        }
+
+        .icon-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: absolute;
+            top: 0;
+            left: -280px;
+            width: 280px;
+            height: 100%;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            z-index: 100;
+            transition: left 0.2s ease;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar.open { left: 0; }
+
+        .sidebar-overlay {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 99;
+        }
+
+        .sidebar-overlay.show { display: block; }
+
+        .sidebar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sidebar-header h2 {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .conv-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 10px;
+            margin-bottom: 2px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .conv-item:hover { background: var(--bg-hover); }
+        .conv-item.active { background: var(--bg-tertiary); }
+
+        .conv-title {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 12px;
+        }
+
+        .conv-delete {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 2px 4px;
+            font-size: 11px;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .conv-item:hover .conv-delete { opacity: 1; }
+        .conv-delete:hover { color: var(--error); }
+
+        /* Settings panel */
+        .settings-panel {
+            display: none;
+            padding: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .settings-panel.show { display: block; }
+
+        .settings-group {
+            margin-bottom: 12px;
+        }
+
+        .settings-group label {
+            display: block;
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .settings-group input,
+        .settings-group select {
+            width: 100%;
+            padding: 6px 8px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 12px;
+            outline: none;
+        }
+
+        .settings-group input:focus,
+        .settings-group select:focus {
+            border-color: var(--accent);
+        }
+
+        .settings-group select {
+            cursor: pointer;
+        }
+
+        .btn-save {
+            width: 100%;
+            padding: 6px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.15s;
+        }
+
+        .btn-save:hover { background: var(--accent-hover); }
+
+        .status-text {
+            font-size: 11px;
+            margin-top: 6px;
+            text-align: center;
+        }
+
+        .status-text.success { color: var(--success); }
+        .status-text.error { color: var(--error); }
+
+        /* Model selector in header */
+        .model-select {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .model-select:focus { border-color: var(--accent); }
+
+        /* Chat area */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .welcome-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .welcome-screen h2 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .welcome-screen p {
+            color: var(--text-secondary);
+            font-size: 12px;
+            max-width: 300px;
+            line-height: 1.5;
+        }
+
+        .welcome-screen .hint {
+            margin-top: 16px;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .welcome-screen .hint p {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .message {
+            margin-bottom: 12px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message-role {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+            color: var(--text-muted);
+        }
+
+        .message-content {
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.55;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .message.user .message-content {
+            background: var(--user-msg);
+            border-bottom-right-radius: 2px;
+        }
+
+        .message.assistant .message-content {
+            background: var(--assistant-msg);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 2px;
+        }
+
+        .message.error .message-content {
+            background: #3d1f1f;
+            border: 1px solid var(--error);
+        }
+
+        /* Code blocks in messages */
+        .message-content code {
+            background: rgba(255, 255, 255, 0.08);
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+            font-size: 12px;
+        }
+
+        .message-content pre {
+            background: #1a1a1a;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+
+        .message-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        /* Typing indicator */
+        .typing-indicator {
+            display: none;
+            padding: 8px 0;
+        }
+
+        .typing-indicator.show { display: block; }
+
+        .typing-dots {
+            display: inline-flex;
+            gap: 4px;
+            padding: 10px 14px;
+            background: var(--assistant-msg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+
+        .typing-dots span {
+            width: 6px;
+            height: 6px;
+            background: var(--text-muted);
+            border-radius: 50%;
+            animation: typing 1.2s ease-in-out infinite;
+        }
+
+        .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+            30% { transform: translateY(-4px); opacity: 1; }
+        }
+
+        /* Input area */
+        .input-area {
+            padding: 8px 12px 12px;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+
+        .input-wrapper textarea {
+            flex: 1;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 13px;
+            resize: none;
+            outline: none;
+            min-height: 38px;
+            max-height: 120px;
+            line-height: 1.4;
+        }
+
+        .input-wrapper textarea:focus {
+            border-color: var(--accent);
+        }
+
+        .input-wrapper textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .send-btn {
+            background: var(--accent);
+            border: none;
+            color: white;
+            padding: 8px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: background 0.15s;
+            flex-shrink: 0;
+            height: 38px;
+        }
+
+        .send-btn:hover { background: var(--accent-hover); }
+
+        .send-btn:disabled {
+            background: var(--bg-hover);
+            color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        /* API key banner */
+        .api-banner {
+            display: none;
+            padding: 10px 12px;
+            background: #3d2e00;
+            border-bottom: 1px solid #6d5000;
+            font-size: 12px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .api-banner.show { display: block; }
+
+        .api-banner a {
+            color: var(--accent);
+            cursor: pointer;
+            text-decoration: underline;
+        }
+    </style>
 </head>
 <body>
-<div>
 
-    <h1>Fusion Palette Sample</h1>
-    <div>
-        <a href="https://help.autodesk.com/view/fusion360/ENU/?guid=GUID-6C0C8148-98D0-4DBC-A4EC-D8E03A8A3B5B">
-            Learn more about working with Palettes in Fusion
-        </a>
+<!-- Sidebar Overlay -->
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+<!-- Sidebar -->
+<div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h2>Conversations</h2>
+        <button class="icon-btn" onclick="toggleSidebar()" title="Close">&#x2715;</button>
     </div>
-    <br><hr>
-
-    <h3>Send Data to HTML Event Handler</h3>
-    <div style='margin-left: 30px;'>
-        <label for="sampleData"><b>Data to send:</b></label>
-        <input type="text" id="sampleData" value="Enter Some Text"><br/><br/>
-        <button type='button' onclick='sendInfoToFusion()' style='background-color: #cccccc; padding: 5px'>
-            <b>Send HTML Event</b>
+    <div style="padding: 8px;">
+        <button class="btn-save" onclick="newConversation()" style="margin-bottom: 4px;">+ New Chat</button>
+    </div>
+    <div class="sidebar-content" id="conversationList"></div>
+    <div class="settings-panel" id="settingsPanel">
+        <div class="settings-group">
+            <label>OpenAI API Key</label>
+            <input type="password" id="apiKeyInput" placeholder="sk-..." />
+        </div>
+        <div class="settings-group">
+            <label>Model</label>
+            <select id="settingsModelSelect"></select>
+        </div>
+        <button class="btn-save" onclick="saveSettings()">Save Settings</button>
+        <div class="status-text" id="settingsStatus"></div>
+    </div>
+    <div style="padding: 8px; border-top: 1px solid var(--border);">
+        <button class="icon-btn" onclick="toggleSettings()" style="width: 100%; text-align: left;">
+            &#9881; Settings
         </button>
     </div>
-
-    <h3>HTML Event Response Value:</h3>
-    <div id='returnValue' style='margin-left: 30px;'>Response</div>
-
-    <h3>Message from "Send to Palette" Command</h3>
-    <div style='margin-left: 30px;'>
-        <p id='fusionMessage'>Message from Fusion</p>
-        <br/><br/>
-    </div>
-
 </div>
+
+<!-- Header -->
+<div class="header">
+    <div class="header-left">
+        <button class="icon-btn" onclick="toggleSidebar()" title="Menu">&#9776;</button>
+        <h1>FusionGPT</h1>
+    </div>
+    <div class="header-actions">
+        <select class="model-select" id="modelSelect" onchange="changeModel(this.value)"></select>
+        <button class="icon-btn" onclick="newConversation()" title="New Chat">+</button>
+    </div>
+</div>
+
+<!-- API Key Banner -->
+<div class="api-banner" id="apiBanner">
+    No API key configured. <a onclick="toggleSidebar(); toggleSettings();">Open Settings</a> to add your OpenAI API key.
+</div>
+
+<!-- Chat Container -->
+<div class="chat-container" id="chatContainer">
+    <div class="welcome-screen" id="welcomeScreen">
+        <h2>FusionGPT</h2>
+        <p>AI-powered design assistant for Autodesk Fusion 360. Ask questions, get design insights, or let the AI create geometry for you.</p>
+        <div class="hint">
+            <p>Try: "Create a 5cm x 3cm rectangle and extrude it 2cm"</p>
+            <p>Or: "Explain the features in my current design"</p>
+        </div>
+    </div>
+</div>
+
+<!-- Typing Indicator -->
+<div class="typing-indicator" id="typingIndicator">
+    <div class="typing-dots">
+        <span></span><span></span><span></span>
+    </div>
+</div>
+
+<!-- Input Area -->
+<div class="input-area">
+    <div class="input-wrapper">
+        <textarea id="messageInput" placeholder="Ask FusionGPT..." rows="1"
+                  onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+<script src="static/palette.js"></script>
 </body>
 </html>

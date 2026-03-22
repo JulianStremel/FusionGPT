@@ -7,12 +7,44 @@ from sqlite3 import connect
 DB_PATH = os.path.join(os.path.dirname(__file__), "fusionGPT.db")
 
 
+def _python_executable():
+    """Return the path to the Python interpreter.
+
+    In Autodesk Fusion 360, ``sys.executable`` points to the Fusion application
+    itself (e.g. ``Fusion360.exe``), not the embedded Python interpreter.
+    Passing that path to ``subprocess`` would launch a new Fusion instance and
+    trigger the "start a new instance?" dialog.  We locate the real interpreter
+    via ``sys.exec_prefix`` instead, which always points to the root of the
+    Python installation that is currently running.
+    """
+    if sys.platform == "win32":
+        candidate = os.path.join(sys.exec_prefix, "python.exe")
+    else:
+        # macOS / Linux – Fusion 360 bundles Python 3; use the versioned name only
+        # to avoid accidentally picking up a Python 2 'python' binary.
+        candidate = os.path.join(sys.exec_prefix, "bin", "python3")
+
+    if os.path.isfile(candidate):
+        return candidate
+
+    # The interpreter could not be found via exec_prefix.  In Fusion 360 this
+    # means pip will not be invoked correctly.  Log a clear message so the
+    # problem is easy to diagnose, then fall back to sys.executable.
+    print(
+        f"FusionGPT: WARNING – could not locate the Python interpreter at "
+        f"'{candidate}'.  Falling back to sys.executable ('{sys.executable}'), "
+        f"which inside Fusion 360 is the Fusion application itself and will "
+        f"likely trigger a 'start a new instance' dialog."
+    )
+    return sys.executable
+
+
 def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+    subprocess.check_call([_python_executable(), "-m", "pip", "install", package])
 
 
 def freeze():
-    subprocess.check_call([sys.executable, "-m", "pip", "freeze"])
+    subprocess.check_call([_python_executable(), "-m", "pip", "freeze"])
 
 
 def get_db_path():

@@ -38,6 +38,15 @@ function initState(dataString) {
     }
 }
 
+// Request current state from Python; called on page load so that the model
+// dropdowns are always populated even if initState arrived before the page
+// was fully rendered.
+window.addEventListener('load', function() {
+    adsk.fusionSendData('getState', '{}').catch(function(err) {
+        console.log('Failed to get initial state:', err);
+    });
+});
+
 // --- UI Updates ---
 
 function updateModelSelectors() {
@@ -206,6 +215,36 @@ function setLoading(loading) {
     scrollToBottom();
 }
 
+// --- Async chat response handlers (called by fusionJavaScriptHandler) ---
+
+function handleChatResponse(dataStr) {
+    setLoading(false);
+    try {
+        var result = JSON.parse(dataStr);
+        if (result.error) {
+            appendError(result.error);
+        } else {
+            appendMessage('assistant', result.response || '');
+            if (result.conversation_id) {
+                state.currentConversationId = result.conversation_id;
+            }
+            refreshConversations();
+        }
+    } catch (e) {
+        appendError('Failed to parse response: ' + dataStr);
+    }
+}
+
+function handleChatError(dataStr) {
+    setLoading(false);
+    try {
+        var err = JSON.parse(dataStr);
+        appendError(err.error || 'An unexpected error occurred.');
+    } catch (e) {
+        appendError('An unexpected error occurred.');
+    }
+}
+
 // --- Actions ---
 
 function sendMessage() {
@@ -214,30 +253,33 @@ function sendMessage() {
 
     if (!message || state.isLoading) return;
 
-    // Show user message
+    // Show user message immediately
     appendMessage('user', message);
     input.value = '';
     autoResize(input);
 
     setLoading(true);
 
-    // Send to Fusion
+    // Fire the request.  Python returns {"status": "processing"} immediately;
+    // the actual response arrives later via fusionJavaScriptHandler (chatResponse
+    // or chatError) once the background thread finishes.
     var payload = JSON.stringify({ message: message });
     adsk.fusionSendData('sendMessage', payload).then(function(resultStr) {
-        setLoading(false);
-
         try {
             var result = JSON.parse(resultStr);
+            if (result.status === 'processing') {
+                // Normal async path – keep the loading indicator running.
+                // The response will arrive via fusionJavaScriptHandler.handle.
+                return;
+            }
+            // Fallback: synchronous error returned before processing started.
+            setLoading(false);
             if (result.error) {
                 appendError(result.error);
-            } else {
-                appendMessage('assistant', result.response);
-                state.currentConversationId = result.conversation_id;
-                // Refresh conversation list
-                refreshConversations();
             }
         } catch (e) {
-            appendError('Failed to parse response: ' + resultStr);
+            setLoading(false);
+            appendError('Communication error');
         }
     }).catch(function(err) {
         setLoading(false);
@@ -411,6 +453,12 @@ window.fusionJavaScriptHandler = {
         try {
             if (action === 'initState') {
                 initState(data);
+            } else if (action === 'chatResponse') {
+                // Async chat result delivered by Python after background thread finishes.
+                handleChatResponse(data);
+            } else if (action === 'chatError') {
+                // Async chat error delivered by Python after background thread fails.
+                handleChatError(data);
             } else if (action === 'debugger') {
                 debugger;
             } else {
@@ -422,3 +470,4 @@ window.fusionJavaScriptHandler = {
         return 'OK';
     },
 };
+

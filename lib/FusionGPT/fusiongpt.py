@@ -2,7 +2,9 @@ import os
 import json
 import traceback
 from sqlite3 import connect, Connection, Cursor
+from typing import Callable, Optional
 from .helper import install, checkSqlite, initSqlite, migrate_db, get_db_path
+from . import logger as fgpt_logger
 
 try:
     from openai import OpenAI
@@ -73,7 +75,7 @@ class FusionGPT:
         else:
             migrate_db()
 
-        self.sqlite = connect(get_db_path())
+        self.sqlite = connect(get_db_path(), check_same_thread=False)
         self.sqlite.execute("PRAGMA foreign_keys = ON")
         self.cursor = self.sqlite.cursor()
 
@@ -224,8 +226,30 @@ class FusionGPT:
 
     # --- Chat ---
 
-    def chat(self, user_message: str, include_feature_tree: bool = True) -> str:
-        """Send a message and get a response. Handles function calling loop."""
+    def chat(self, user_message: str, include_feature_tree: bool = True,
+             feature_tree_context: str = None,
+             tool_executor: Optional[Callable[[str, dict], str]] = None) -> str:
+        """Send a message and get a response. Handles function calling loop.
+
+        Parameters
+        ----------
+        user_message:
+            The text the user typed.
+        include_feature_tree:
+            If *True* and no *feature_tree_context* is provided, the method
+            will try to extract the feature-tree from Fusion (safe only when
+            called from the Fusion main thread).
+        feature_tree_context:
+            Pre-extracted feature-tree string.  When supplied the
+            *include_feature_tree* flag is ignored.  Pass this when calling
+            from a background thread so that the Fusion API is not accessed
+            off-thread.
+        tool_executor:
+            Optional callable ``(tool_name: str, args: dict) -> str``.
+            When provided it is used instead of the built-in ``execute_tool``
+            function.  Pass a custom executor when running in a background
+            thread so that Fusion API calls are marshalled to the main thread.
+        """
         if not self.is_api_ready():
             return "Error: OpenAI API key not configured. Please set it in Settings."
 
@@ -245,20 +269,25 @@ class FusionGPT:
             self._auto_title(conv_id, user_message)
 
         # Build messages list
-        messages = self._build_messages(conv_id, include_feature_tree)
+        messages = self._build_messages(conv_id, include_feature_tree, feature_tree_context)
 
         # Call OpenAI with function calling loop
         try:
-            return self._completion_loop(conv_id, messages)
+            return self._completion_loop(conv_id, messages, tool_executor=tool_executor)
         except Exception as e:
             error_msg = f"Error calling OpenAI API: {str(e)}"
+            fgpt_logger.log_error(f"chat() error: {traceback.format_exc()}")
             return error_msg
 
-    def _build_messages(self, conv_id: int, include_feature_tree: bool) -> list:
+    def _build_messages(self, conv_id: int, include_feature_tree: bool = True,
+                        feature_tree_context: str = None) -> list:
         """Build the full messages array for the API call."""
         system_content = SYSTEM_PROMPT
 
-        if include_feature_tree:
+        if feature_tree_context:
+            # Use pre-extracted context (caller is responsible for thread safety)
+            system_content += f"\n\n{feature_tree_context}"
+        elif include_feature_tree:
             try:
                 tree_context = get_feature_tree_context()
                 if tree_context:
@@ -280,9 +309,13 @@ class FusionGPT:
 
         return messages
 
-    def _completion_loop(self, conv_id: int, messages: list, max_iterations: int = 10) -> str:
+    def _completion_loop(self, conv_id: int, messages: list,
+                         max_iterations: int = 10,
+                         tool_executor: Optional[Callable[[str, dict], str]] = None) -> str:
         """Run the completion loop, handling tool calls until a final text response."""
         for _ in range(max_iterations):
+            fgpt_logger.log_llm_request(self.current_model, messages)
+
             response = self.api.chat.completions.create(
                 model=self.current_model,
                 messages=messages,
@@ -306,6 +339,8 @@ class FusionGPT:
                     }
                     for tc in message.tool_calls
                 ]
+                fgpt_logger.log_llm_response(message.content, tool_calls_data)
+
                 self._save_message(conv_id, "assistant", message.content or "", tool_calls=tool_calls_data)
                 messages.append({
                     "role": "assistant",
@@ -316,7 +351,12 @@ class FusionGPT:
                 # Execute each tool call
                 for tc in message.tool_calls:
                     args = json.loads(tc.function.arguments)
-                    result = execute_tool(tc.function.name, args)
+                    if tool_executor is not None:
+                        result = tool_executor(tc.function.name, args)
+                    else:
+                        result = execute_tool(tc.function.name, args)
+
+                    fgpt_logger.log_tool_call(tc.function.name, args, result)
 
                     self._save_message(conv_id, "tool", result, tool_call_id=tc.id)
                     messages.append({
@@ -327,6 +367,7 @@ class FusionGPT:
             else:
                 # Final text response
                 assistant_text = message.content or ""
+                fgpt_logger.log_llm_response(assistant_text)
                 self._save_message(conv_id, "assistant", assistant_text)
                 return assistant_text
 

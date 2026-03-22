@@ -41,9 +41,11 @@ CHAT_DONE_EVENT = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_ChatDone'
 TOOL_EXECUTION_TIMEOUT_SECONDS = 30
 
 # Queues shared between background thread and custom-event handlers.
+# Note: only tool-exec uses a result queue (round-trip handshake); the chat-done
+# result is passed directly through CustomEventArgs.additionalInfo to avoid any
+# queue-timing issues.
 _tool_request_queue: queue.Queue = queue.Queue()
 _tool_result_queue: queue.Queue = queue.Queue()
-_chat_result_queue: queue.Queue = queue.Queue()
 
 local_handlers = []
 _custom_event_handlers = []
@@ -131,15 +133,22 @@ def _on_tool_exec(args: adsk.core.CustomEventArgs):
 
 
 def _on_chat_done(args: adsk.core.CustomEventArgs):
-    """Main thread: forward the finished chat result to the HTML palette."""
+    """Main thread: forward the finished chat result to the HTML palette.
+
+    The result JSON is carried directly in args.additionalInfo so there is no
+    separate queue and no timing dependency between the put() and the event
+    delivery.
+    """
     try:
-        result = _chat_result_queue.get_nowait()
+        data_str = args.additionalInfo
+        result = json.loads(data_str)
         palette = ui.palettes.itemById(PALETTE_ID)
-        if palette and palette.isVisible:
-            action = 'chatError' if result.get('error') else 'chatResponse'
-            palette.sendInfoToHTML(action, json.dumps(result))
-    except queue.Empty:
-        pass
+        if palette is None:
+            futil.log(f'{CMD_NAME}: _on_chat_done – palette not found, response lost')
+            return
+        action = 'chatError' if result.get('error') else 'chatResponse'
+        futil.log(f'{CMD_NAME}: _on_chat_done – sending {action} to palette')
+        palette.sendInfoToHTML(action, data_str)
     except Exception:
         futil.handle_error('_on_chat_done')
 
@@ -161,23 +170,29 @@ def _tool_executor(tool_name: str, tool_args: dict) -> str:
 
 def _run_chat_in_thread(user_message: str, feature_tree: str):
     """Background thread: run the full chat/tool-call loop then signal the
-    main thread via CHAT_DONE_EVENT."""
+    main thread via CHAT_DONE_EVENT.
+
+    The result is serialised to JSON and passed as the additionalInfo string
+    of the custom event so that the main-thread handler can read it directly
+    from args.additionalInfo without any queue involvement.
+    """
     from FusionGPT import FusionGPT
     gpt = FusionGPT.instance()
+    result_json = json.dumps({"error": "Unknown error in chat thread"})
     try:
         response = gpt.chat(
             user_message,
             feature_tree_context=feature_tree,
             tool_executor=_tool_executor,
         )
-        _chat_result_queue.put({
+        result_json = json.dumps({
             "response": response,
             "conversation_id": gpt.current_conversation_id,
         })
     except Exception:
-        _chat_result_queue.put({"error": traceback.format_exc()})
+        result_json = json.dumps({"error": traceback.format_exc()})
     finally:
-        app.fireCustomEvent(CHAT_DONE_EVENT, '')
+        app.fireCustomEvent(CHAT_DONE_EVENT, result_json)
 
 
 # ---------------------------------------------------------------------------
